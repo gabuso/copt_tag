@@ -1,11 +1,11 @@
-var alvar_bind = require('../node_modules/alvar/lib/alvar');
+var alvar_bind = require('./alvar/lib/alvar');
 var fs = require('fs');
 var http = require('http');
 var ardrone = require('ar-drone');
 var util = require("util");
 var events = require("events");
-var sigwin = require('signalwindow');
-var Rls_UD_filter = require('Rls_UD_filter');
+var sigwin = require('./filters/signalwindow');
+var Rls_UD_filter = require('./filters/Rls_UD_filter');
 var sylvester = require('sylvester');
 var Matrix = sylvester.Matrix;
 var Vector = sylvester.Vector;
@@ -51,6 +51,8 @@ var processingNavdata = false;
 
 var vxc = 0;
 var vyc = 0;
+var inte_vx = 0;
+var inte_vy = 0;
 
 var org = function (){return {x:0 , y:0};};
 
@@ -156,7 +158,8 @@ if(tracking && (!processingImage) && lastPng) {
   processingImage = true;
   var d_now = new Date();
     // console.log("ff");
-    if(d_now-date_last_vid>20)
+    var dt = d_now-date_last_vid;
+    if(dt>20)
     {
        console.log(d_now-date_last_vid);
       date_last_vid = d_now;
@@ -193,7 +196,7 @@ if(tracking && (!processingImage) && lastPng) {
 
                         var depth = alvar.GetDepthPix(id_target);
 
-                        var side_error = ((marker.pt1.x + marker.pt2.x)/2 - (x1_c + x2_c)/2) ;
+                        var side_error = ((marker.pt1.x + marker.pt2.x)/2 - ((x1_c + x2_c)/2+50)) ;
 
                        //  var k_damp = 0.012;
                        //  //0.02
@@ -209,9 +212,18 @@ if(tracking && (!processingImage) && lastPng) {
 
                        // console.log("  ");
 
-                      
-                       vxc = 0.1*(0.65-depth);
-                       vyc = 0.0001*side_error; 
+                      var x_e = (0.8-depth);
+                      inte_vx = inte_vx + 0.03*dt/1000*x_e;
+                       vxc = 0.4*x_e + inte_vx;
+
+
+                      inte_vy = inte_vy + 0*0.00001*dt/1000*side_error;
+                      //0.001
+                       vyc = 0.002*side_error+inte_vy; 
+
+                       // vxc=0;
+                       // vyc=0;
+
                        // last_cmd.forward_cmd = forward_cmd;
                        // last_cmd.side_cmd = side_cmd;
                        console.log(vxc+"   "+vyc);
@@ -256,6 +268,7 @@ client.on('navdata',function(navdata){
   if(dt>19 &&  navdata.hasOwnProperty('demo') && (!processingNavdata))
   {
     processingNavdata = true;
+   
 
     date_last_nav = d_now;
     last_navdata = navdata;
@@ -280,15 +293,35 @@ client.on('navdata',function(navdata){
 
 
       // var vxc = 0;
+      //  var vx = last_navdata.demo.velocity.x/1000;
+      //  last_cmd.inte_x = last_cmd.inte_x + 0.05*dt/1000.0*(vxc-vx);
+      //  var forward_cmd = (-0.62*vx+0.1*vxc + last_cmd.inte_x); 
+
+      //  //var vyc = 0;
+      //  var vy = last_navdata.demo.velocity.y/1000;
+      //  last_cmd.inte_y = last_cmd.inte_y + 0.05*dt/1000.0*(vyc-vy);
+      // var side_cmd = -0.62*vy+0.1*vyc + last_cmd.inte_y; 
+
        var vx = last_navdata.demo.velocity.x/1000;
-       last_cmd.inte_x = last_cmd.inte_x + 0.0002*dt*(vxc-vx);
-       var forward_cmd = (-0.92*vx + last_cmd.inte_x); 
+       var ki_x = 0;
+       if(Math.abs(vxc)<1e-3)
+       {
+        ki_x=0.3;
+       }
+       last_cmd.inte_x = last_cmd.inte_x + ki_x*dt/1000.0*(vxc-vx);
+       //0.7 0.6
+       var forward_cmd = (-1.0*vx+0.4*vxc + last_cmd.inte_x); 
 
        //var vyc = 0;
        var vy = last_navdata.demo.velocity.y/1000;
-       last_cmd.inte_y = last_cmd.inte_y + 0.0002*dt*(vyc-vy);
-      var side_cmd = -0.92*vy + last_cmd.inte_y; 
-
+       var ki_y = 0;
+       if(Math.abs(vyc)<1e-3)
+       {
+        ki_y=0.3;
+       }
+       //0.7 0.6
+       last_cmd.inte_y = last_cmd.inte_y + ki_y*dt/1000.0*(vyc-vy);
+      var side_cmd = -1.0*vy+0.4*vyc + last_cmd.inte_y; 
        
 
        vert_cmd = 0;
@@ -310,7 +343,9 @@ client.on('navdata',function(navdata){
     +last_cmd.inte_y+';'+last_navdata.demo.rotation.pitch+';'+last_navdata.demo.rotation.roll+';'+last_navdata.references.pitch+';'
     +last_navdata.references.roll+';'+
     vx_sig.getsigdelayed(0.2)+';'+vy_sig.getsigdelayed(0.2)+';'+pitch_sig.getsigdelayed(0.2)+';'+roll_sig.getsigdelayed(0.2)+';'+
-    param_estim.param.elements[0]+';'+param_estim.param.elements[1]+';'+param_estim.param.elements[2]+';'+param_estim.yhat_n+';'+'\n';
+    param_estim.param.elements[0]+';'+param_estim.param.elements[1]+';'+param_estim.param.elements[2]+';'+param_estim.yhat_n+';'+
+    vxc+';'+vyc+';'
+    +'\n';
                                         fs.appendFile(log_file_name, data_tosave, function (err) {
                                           if (err) throw err;
                                           
